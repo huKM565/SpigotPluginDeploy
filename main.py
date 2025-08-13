@@ -280,12 +280,8 @@ class PluginDeployerApp:
                 if proc.info['name'] == self.process_name.get():
                     proc.kill()
                     self.log_message(f"Процесс {self.process_name.get()} завершён")
-                    return True
-            self.log_message(f"Процесс {self.process_name.get()} не найден")
-            return False
         except Exception as e:
             self.log_message(f"Ошибка: {str(e)}")
-            return False
 
     def run_bat(self):
         try:
@@ -327,8 +323,8 @@ class PluginHandler(FileSystemEventHandler):
 
                     time.sleep(3)
                     
-                    if self.app.kill_process():
-                        self.app.run_bat()
+                    self.app.kill_process()
+                    self.app.run_bat()
                         
                 except Exception as e:
                     self.app.log_message(f"Ошибка: {str(e)}")
