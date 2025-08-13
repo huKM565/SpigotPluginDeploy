@@ -8,6 +8,7 @@ from datetime import datetime
 import psutil
 import subprocess
 import json
+import time
 
 # Константы
 CONFIG_FILE = "deployer_config.json"
@@ -323,6 +324,8 @@ class PluginHandler(FileSystemEventHandler):
                     
                     shutil.move(src, dst)
                     self.app.log_message(f"Плагин перемещён в: {dst}")
+
+                    time.sleep(3)
                     
                     if self.app.kill_process():
                         self.app.run_bat()
