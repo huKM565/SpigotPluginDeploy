@@ -262,6 +262,11 @@ class PluginDeployerApp:
         self.log_message(f"Мониторинг запущен:\n- Проект: {self.project_dir.get()}\n- Сервер: {self.server_dir.get()}")
         
         event_handler = PluginHandler(self)
+        
+        # Сначала проверяем существующие файлы
+        event_handler.check_existing_files()
+        
+        # Затем запускаем мониторинг новых файлов
         self.observer = Observer()
         self.observer.schedule(event_handler, self.target_dir, recursive=False)
         self.observer.start()
@@ -303,31 +308,50 @@ class PluginHandler(FileSystemEventHandler):
     def __init__(self, app):
         self.app = app
     
-    def on_created(self, event):
-        if not event.is_directory and event.src_path.endswith(".jar"):
-            filename = os.path.basename(event.src_path)
+    def check_and_deploy_plugin(self, filepath):
+        """Общая функция для проверки и деплоя плагина"""
+        if not filepath.endswith(".jar"):
+            return
             
-            if "original" not in filename.lower() and "shaded" not in filename.lower():
-                src = event.src_path
-                dst = os.path.join(self.app.plugins_dir, filename)
-                
-                self.app.log_message(f"Обнаружен плагин: {filename}")
-                
-                try:
-                    if os.path.exists(dst):
-                        os.remove(dst)
-                        self.app.log_message(f"Удалена старая версия: {filename}")
-                    
-                    shutil.move(src, dst)
-                    self.app.log_message(f"Плагин перемещён в: {dst}")
+        filename = os.path.basename(filepath)
+        
+        if "original" in filename.lower() or "shaded" in filename.lower():
+            return
+            
+        src = filepath
+        dst = os.path.join(self.app.plugins_dir, filename)
+        
+        self.app.log_message(f"Обнаружен плагин: {filename}")
+        
+        try:
+            if os.path.exists(dst):
+                os.remove(dst)
+                self.app.log_message(f"Удалена старая версия: {filename}")
+            
+            shutil.move(src, dst)
+            self.app.log_message(f"Плагин перемещён в: {dst}")
 
-                    time.sleep(3)
-                    
-                    self.app.kill_process()
-                    self.app.run_bat()
-                        
-                except Exception as e:
-                    self.app.log_message(f"Ошибка: {str(e)}")
+            time.sleep(3)
+            
+            self.app.kill_process()
+            self.app.run_bat()
+                
+        except Exception as e:
+            self.app.log_message(f"Ошибка: {str(e)}")
+
+    def on_created(self, event):
+        if not event.is_directory:
+            self.check_and_deploy_plugin(event.src_path)
+
+    def check_existing_files(self):
+        """Проверяет существующие файлы в target директории"""
+        if not os.path.exists(self.app.target_dir):
+            return
+            
+        for filename in os.listdir(self.app.target_dir):
+            filepath = os.path.join(self.app.target_dir, filename)
+            if os.path.isfile(filepath):
+                self.check_and_deploy_plugin(filepath)
 
 if __name__ == "__main__":
     root = tk.Tk()
