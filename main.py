@@ -6,6 +6,7 @@ from watchdog.observers import Observer
 from watchdog.events import FileSystemEventHandler
 from datetime import datetime
 import psutil
+import hashlib
 import subprocess
 import json
 import time
@@ -21,10 +22,13 @@ DEFAULT_HEIGHT = 600
 DEFAULT_X = 100
 DEFAULT_Y = 100
 
+
 class AutoWidthBlock:
     def __init__(self, parent, title):
         self.frame = ttk.LabelFrame(parent, text=title, width=MIN_BLOCK_WIDTH)
-        self.frame.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, padx=BLOCK_PADX, pady=BLOCK_PADY)
+        self.frame.pack(
+            side=tk.LEFT, fill=tk.BOTH, expand=True, padx=BLOCK_PADX, pady=BLOCK_PADY
+        )
         self.content = ttk.Frame(self.frame)
         self.content.pack(fill=tk.BOTH, expand=True, padx=INNER_PAD, pady=INNER_PAD)
 
@@ -43,67 +47,72 @@ class AutoWidthBlock:
         lbl.pack(fill=tk.X, pady=2)
         return lbl
 
+
 class PluginDeployerApp:
     def __init__(self, root):
         self.root = root
         self.root.title("Spigot Plugin Auto-Deployer")
-        
+
         # Инициализация переменных
         self.project_dir = tk.StringVar()
         self.server_dir = tk.StringVar()
         self.process_name = tk.StringVar(value="java.exe")
         self.is_running = False
+        self.last_compilation_progress = False
+        self.compilation_in_progress = False  # Флаг компиляции
         self.observer = None
         self.target_dir = ""
         self.plugins_dir = ""
         self.bat_file = ""
-        
+
         # Параметры окна
         self.window_width = DEFAULT_WIDTH
         self.window_height = DEFAULT_HEIGHT
         self.window_x = DEFAULT_X
         self.window_y = DEFAULT_Y
-        
+
         # Загружаем конфиг
         self.load_config()
-        
+
         # Устанавливаем геометрию ПОСЛЕ загрузки конфига
-        self.root.geometry(f"{self.window_width}x{self.window_height}+{self.window_x}+{self.window_y}")
-        
+        self.root.geometry(
+            f"{self.window_width}x{self.window_height}+{self.window_x}+{self.window_y}"
+        )
+
         # Главный контейнер
         main_frame = ttk.Frame(root)
         main_frame.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
-        
+
         # Создание интерфейса
         top_frame = ttk.Frame(main_frame)
         top_frame.pack(fill=tk.X)
         self.create_interface(top_frame)
-        
+
         # Блок логов
         log_frame = ttk.LabelFrame(main_frame, text="Лог выполнения")
         log_frame.pack(fill=tk.BOTH, expand=True)
-        
+
         scrollbar = ttk.Scrollbar(log_frame)
         scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
-        
+
         self.log_text = tk.Text(
             log_frame,
             height=15,
             state="disabled",
             yscrollcommand=scrollbar.set,
-            wrap=tk.WORD
+            wrap=tk.WORD,
         )
         self.log_text.pack(fill=tk.BOTH, expand=True)
         scrollbar.config(command=self.log_text.yview)
-        
+
         # Обработчик изменения размера и положения
-        self.root.bind('<Configure>', self.on_window_change)
+        self.root.bind("<Configure>", self.on_window_change)
 
     def on_window_change(self, event):
         """Сохраняем параметры окна при изменении"""
         if event.widget == self.root:
             # Обновляем только если окно не минимизировано
-            if not self.root.state() == 'iconic':
+            if not self.root.state() == "iconic":
                 self.window_width = self.root.winfo_width()
                 self.window_height = self.root.winfo_height()
                 self.window_x = self.root.winfo_x()
@@ -130,16 +139,13 @@ class PluginDeployerApp:
         # Блок управления
         control_block = AutoWidthBlock(parent, "Управление")
         self.start_btn = ttk.Button(
-            control_block.content, 
-            text="Запуск мониторинга", 
-            command=self.start_monitoring
+            control_block.content,
+            text="Запуск мониторинга",
+            command=self.start_monitoring,
         )
         self.start_btn.pack(fill=tk.X, pady=2)
-        
         ttk.Button(
-            control_block.content,
-            text="Остановить",
-            command=self.stop_monitoring
+            control_block.content, text="Остановить", command=self.stop_monitoring
         ).pack(fill=tk.X, pady=2)
 
     def load_config(self):
@@ -148,22 +154,22 @@ class PluginDeployerApp:
             try:
                 with open(CONFIG_FILE, "r") as f:
                     config = json.load(f)
-                    
+
                     # Загружаем параметры окна
                     self.window_width = config.get("window_width", DEFAULT_WIDTH)
                     self.window_height = config.get("window_height", DEFAULT_HEIGHT)
                     self.window_x = config.get("window_x", DEFAULT_X)
                     self.window_y = config.get("window_y", DEFAULT_Y)
-                    
+
                     # Проверяем, чтобы окно не выходило за пределы экрана
                     screen_width = self.root.winfo_screenwidth()
                     screen_height = self.root.winfo_screenheight()
-                    
+
                     if self.window_x < 0 or self.window_x > screen_width - 100:
                         self.window_x = DEFAULT_X
                     if self.window_y < 0 or self.window_y > screen_height - 100:
                         self.window_y = DEFAULT_Y
-                    
+
                     # Загружаем остальные параметры
                     if "project_dir" in config:
                         self.project_dir.set(config["project_dir"])
@@ -171,16 +177,20 @@ class PluginDeployerApp:
                         self.server_dir.set(config["server_dir"])
                     if "process_name" in config:
                         self.process_name.set(config["process_name"])
-                    
+
                     # Обновляем пути
                     if self.project_dir.get():
                         self.target_dir = os.path.join(self.project_dir.get(), "target")
                     if self.server_dir.get():
-                        self.plugins_dir = os.path.join(self.server_dir.get(), "plugins")
+                        self.plugins_dir = os.path.join(
+                            self.server_dir.get(), "plugins"
+                        )
                         self.bat_file = os.path.join(self.server_dir.get(), "start.bat")
-                        
+
             except Exception as e:
-                messagebox.showerror("Ошибка", f"Не удалось загрузить конфиг:\n{str(e)}")
+                messagebox.showerror(
+                    "Ошибка", f"Не удалось загрузить конфиг:\n{str(e)}"
+                )
 
     def save_config(self):
         """Сохранение конфигурации"""
@@ -191,9 +201,9 @@ class PluginDeployerApp:
             "window_y": self.window_y,
             "project_dir": self.project_dir.get(),
             "server_dir": self.server_dir.get(),
-            "process_name": self.process_name.get()
+            "process_name": self.process_name.get(),
         }
-        
+
         try:
             with open(CONFIG_FILE, "w") as f:
                 json.dump(config, f, indent=4)
@@ -225,47 +235,53 @@ class PluginDeployerApp:
     def update_paths(self):
         project_path = self.project_dir.get()
         server_path = self.server_dir.get()
-        
+
         if not project_path:
             self.log_message("⚠ Не указана папка проекта")
             return False
-            
+
         self.target_dir = os.path.join(project_path, "target")
         if not os.path.exists(self.target_dir):
             self.log_message(f"⚠ Папка 'target' не найдена в проекте")
             return False
-            
+
         if not server_path:
             self.log_message("⚠ Не указана папка сервера")
             return False
-            
+
         self.plugins_dir = os.path.join(server_path, "plugins")
         self.bat_file = os.path.join(server_path, "start.bat")
-        
+
         if not os.path.exists(self.plugins_dir):
             self.log_message(f"⚠ Папка 'plugins' не найдена в сервере")
             return False
-            
+
         if not os.path.exists(self.bat_file):
             self.log_message(f"⚠ Файл 'start.bat' не найден в сервере")
             return False
-            
+
         return True
 
     def start_monitoring(self):
         if not self.update_paths():
             messagebox.showerror("Ошибка", "Проверьте папки проекта и сервера!")
             return
-            
+
         self.is_running = True
         self.start_btn.config(state="disabled")
-        self.log_message(f"Мониторинг запущен:\n- Проект: {self.project_dir.get()}\n- Сервер: {self.server_dir.get()}")
-        
+        self.log_message(
+            f"Мониторинг запущен:\n- Проект: {self.project_dir.get()}\n- Сервер: {self.server_dir.get()}"
+        )
+
+        # Запускаем мониторинг компиляции
+        self.log_message("Поиск java.exe, запущенных через IDEA")
+        self.start_compilation_monitoring()
+
         event_handler = PluginHandler(self)
-        
+
         # Сначала проверяем существующие файлы
         event_handler.check_existing_files()
-        
+
         # Затем запускаем мониторинг новых файлов
         self.observer = Observer()
         self.observer.schedule(event_handler, self.target_dir, recursive=False)
@@ -279,10 +295,84 @@ class PluginDeployerApp:
         self.start_btn.config(state="normal")
         self.log_message("Мониторинг остановлен")
 
+
+    def check_idea_java_processes(self):
+        # Ищем conhost.exe
+        self.last_compilation_progress = self.compilation_in_progress
+        found = False
+        for proc in psutil.process_iter(["pid", "name"]):
+            try:
+                if proc.info["name"].lower() == "conhost.exe":
+
+                    # Берем родителя (предполагаем java.exe)
+                    parent = proc.parent()
+                    if not parent:
+                        continue
+
+                    # Берем дедушку (предполагаем idea64.exe)
+                    grandparent = parent.parent()
+                    if not grandparent:
+                        continue
+
+                    # Проверяем цепочку: IDEA -> Java
+                    if (
+                        "java.exe" in parent.name().lower()
+                        and "idea64.exe" in grandparent.name().lower()
+                    ):
+                        found = True
+                        self.log_message("Обнаружен процесс компиляции через IDEA (java.exe)")
+                        self.compilation_in_progress = True
+            except (psutil.NoSuchProcess, psutil.AccessDenied, psutil.ZombieProcess):
+                pass
+            
+        if not found:
+            self.compilation_in_progress = False
+            if self.last_compilation_progress and not self.compilation_in_progress:
+                self.log_message("Компиляция завершена, копирование плагина...")
+                self.copy_latest_plugin()
+                self.run_bat()
+
+    def copy_latest_plugin(self):
+        """Копирует последний собранный плагин из target в папку сервера"""
+        try:
+            if not os.path.exists(self.target_dir):
+                self.log_message("Ошибка: папка target не найдена")
+                return
+
+            jar_files = [
+                f
+                for f in os.listdir(self.target_dir)
+                if f.endswith(".jar") and "original" not in f and "shaded" not in f
+            ]
+
+            if not jar_files:
+                self.log_message("Ошибка: не найден файл плагина")
+                return
+
+            latest_jar = max(
+                [os.path.join(self.target_dir, f) for f in jar_files],
+                key=os.path.getmtime,
+            )
+
+            dest_path = os.path.join(self.plugins_dir, os.path.basename(latest_jar))
+            shutil.copy2(latest_jar, dest_path)
+            self.log_message(f"Плагин скопирован в: {dest_path}")
+
+        except Exception as e:
+            self.log_message(f"Ошибка копирования плагина: {str(e)}")
+
+    def start_compilation_monitoring(self, interval=2):
+        """Запускает периодическую проверку состояния компиляции"""
+        self.check_idea_java_processes()
+        if self.is_running:
+            self.root.after(
+                interval * 1000, lambda: self.start_compilation_monitoring(interval)
+            )
+
     def kill_process(self):
         try:
-            for proc in psutil.process_iter(['name']):
-                if proc.info['name'] == self.process_name.get():
+            for proc in psutil.process_iter(["name"]):
+                if proc.info["name"] == self.process_name.get():
                     proc.kill()
                     self.log_message(f"Процесс {self.process_name.get()} завершён")
         except Exception as e:
@@ -290,52 +380,68 @@ class PluginDeployerApp:
 
     def run_bat(self):
         try:
+            # Проверяем и завершаем предыдущий процесс сервера
+            self.kill_process()
+            
+            # Запускаем новый сервер
             subprocess.Popen(
                 [self.bat_file],
                 cwd=self.server_dir.get(),
-                creationflags=subprocess.CREATE_NEW_CONSOLE
+                creationflags=subprocess.CREATE_NEW_CONSOLE,
             )
             self.log_message(f"Сервер запущен: {self.bat_file}")
         except Exception as e:
             self.log_message(f"Ошибка запуска: {str(e)}")
 
     def on_close(self):
+        """Обработчик закрытия окна"""
         self.stop_monitoring()
         self.save_config()
         self.root.destroy()
 
+
 class PluginHandler(FileSystemEventHandler):
     def __init__(self, app):
         self.app = app
-    
+        self.plugin_hashes = {}  # Словарь для хранения хешей плагинов
+
     def check_and_deploy_plugin(self, filepath):
         """Общая функция для проверки и деплоя плагина"""
         if not filepath.endswith(".jar"):
             return
-            
+
         filename = os.path.basename(filepath)
-        
+
         if "original" in filename.lower() or "shaded" in filename.lower():
             return
-            
+
         src = filepath
         dst = os.path.join(self.app.plugins_dir, filename)
-        
-        self.app.log_message(f"Обнаружен плагин: {filename}")
-        
+
         try:
+            # Вычисляем хеш текущего файла
+            with open(src, "rb") as f:
+                file_hash = hashlib.md5(f.read()).hexdigest()
+
+            # Если файл уже существует и хеш не изменился - пропускаем
+            if os.path.exists(dst) and self.plugin_hashes.get(filename) == file_hash:
+                return
+
             if os.path.exists(dst):
                 os.remove(dst)
                 self.app.log_message(f"Удалена старая версия: {filename}")
-            
-            shutil.move(src, dst)
-            self.app.log_message(f"Плагин перемещён в: {dst}")
+
+            shutil.copy2(
+                src, dst
+            )  # Используем copy2 вместо move чтобы сохранить исходный файл
+            self.plugin_hashes[filename] = file_hash  # Сохраняем новый хеш
+            self.app.log_message(f"Плагин обновлён в: {dst} (хеш: {file_hash})")
 
             time.sleep(3)
-            
+
             self.app.kill_process()
             self.app.run_bat()
-                
+
         except Exception as e:
             self.app.log_message(f"Ошибка: {str(e)}")
 
@@ -347,11 +453,12 @@ class PluginHandler(FileSystemEventHandler):
         """Проверяет существующие файлы в target директории"""
         if not os.path.exists(self.app.target_dir):
             return
-            
+
         for filename in os.listdir(self.app.target_dir):
             filepath = os.path.join(self.app.target_dir, filename)
             if os.path.isfile(filepath):
                 self.check_and_deploy_plugin(filepath)
+
 
 if __name__ == "__main__":
     root = tk.Tk()
